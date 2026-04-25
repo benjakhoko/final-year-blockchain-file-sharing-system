@@ -1,0 +1,2 @@
+const contract = await FileSharing.attach("0x9f9276F6541881CAE49a7010131Cb3058eA46733");
+const FileSharing = await ethers.getContractFactory("FileSharing");

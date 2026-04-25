@@ -1,0 +1,40 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\BENJAMIN\\React Native\\final project\\blockchain-file-sharing\\backend\\contracts\\FileSharing.sol": {
+      "lastModificationDate": 1772222095790,
+      "contentHash": "2be8ce27bd2c5e27dc89c33217e91828",
+      "sourceName": "contracts/FileSharing.sol",
+      "solcConfig": {
+        "version": "0.8.19",
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.19"
+      ],
+      "artifacts": [
+        "FileSharing"
+      ]
+    }
+  }
+}
