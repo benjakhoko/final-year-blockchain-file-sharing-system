@@ -114,7 +114,6 @@ const ShareModal = ({ isOpen, onClose, file, onShareSuccess }) => {
                         onChange={(e) => setAccessType(e.target.value)}
                         className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                       >
-                        <option value="view">View only</option>
                         <option value="download">View and Download</option>
                       </select>
                     </div>

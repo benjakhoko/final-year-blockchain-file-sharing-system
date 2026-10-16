@@ -88,7 +88,7 @@ exports.login = async (req, res, next) => {
         }
 
         // Check if account is active
-        if (!user.isActive) {
+        if (user.isActive === false) {
             return res.status(401).json({
                 success: false,
                 message: 'Account is deactivated. Please contact admin.'

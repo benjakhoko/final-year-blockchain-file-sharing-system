@@ -20,9 +20,13 @@ const FileVerification = ({ file }) => {
       setVerificationResult(result);
       
       if (result) {
-        await logAccess(file.blockchainFileId, 'VERIFY');
+        if (result.exists !== false) {
+          await logAccess(file.blockchainFileId, 'VERIFY');
+        }
         
-        if (result.isValid) {
+        if (result.exists === false) {
+          toast.error(result.message || 'File not found on current blockchain contract');
+        } else if (result.isValid) {
           toast.success('File integrity verified on blockchain!');
         } else {
           toast.error('File has been tampered with!');
@@ -75,11 +79,18 @@ const FileVerification = ({ file }) => {
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500">Status</span>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                      verificationResult.isValid 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-red-100 text-red-800'
+                      verificationResult.exists === false
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : verificationResult.isValid
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
                     }`}>
-                      {verificationResult.isValid ? (
+                      {verificationResult.exists === false ? (
+                        <>
+                          <ShieldExclamationIcon className="h-3 w-3 mr-1" />
+                          Not Found
+                        </>
+                      ) : verificationResult.isValid ? (
                         <>
                           <ShieldCheckIcon className="h-3 w-3 mr-1" />
                           Verified

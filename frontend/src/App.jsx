@@ -5,10 +5,15 @@ import { AuthProvider } from './context/AuthContext';
 import { Web3Provider } from './context/Web3Context';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Navbar from './components/Layout/Navbar';
+import LandingPage from './pages/LandingPage'; // Import Landing Page
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Files from './pages/Files';
+import FileScanner from './pages/FileScanner';
+import AIAlerts from './pages/AIAlerts';
+import AdminAIDashboard from './pages/admin/AIDashboard';
+
 import Feedback from './pages/Feedback';
 
 // Admin imports
@@ -27,7 +32,10 @@ function App() {
         <Web3Provider>
           <Toaster position="top-right" />
           <Routes>
-            {/* Public routes */}
+            {/* Public landing page */}
+            <Route path="/" element={<LandingPage />} />
+            
+            {/* Auth routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             
@@ -54,6 +62,7 @@ function App() {
                 </ProtectedRoute>
               }
             />
+           
             <Route
               path="/feedback"
               element={
@@ -65,6 +74,28 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+  path="/scanner"
+  element={
+    <ProtectedRoute>
+      <>
+        <Navbar />
+        <FileScanner />
+      </>
+    </ProtectedRoute>
+  }
+/>
+<Route
+  path="/ai-alerts"
+  element={
+    <ProtectedRoute>
+      <>
+        <Navbar />
+        <AIAlerts />
+      </>
+    </ProtectedRoute>
+  }
+/>
             
             {/* Admin routes */}
             <Route
@@ -80,11 +111,12 @@ function App() {
               <Route path="files" element={<AdminFiles />} />
               <Route path="tampered" element={<AdminTamperedFiles />} />
               <Route path="logs" element={<AdminLogs />} />
+              <Route path="ai" element={<AdminAIDashboard />} />
               <Route path="feedback" element={<AdminFeedback />} />
             </Route>
             
-            {/* Redirect root to dashboard */}
-            <Route path="/" element={<Navigate to="/dashboard" />} />
+            {/* Catch all redirect to landing */}
+            <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Web3Provider>
       </AuthProvider>

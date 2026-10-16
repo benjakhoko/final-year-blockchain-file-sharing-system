@@ -66,6 +66,131 @@ class BlockchainService {
         return ((gas * 120n) / 100n).toString();
     }
 
+    normalizeBytecode(bytecode) {
+        if (!bytecode || typeof bytecode !== 'string') {
+            return null;
+        }
+
+        return bytecode.startsWith('0x') ? bytecode : `0x${bytecode}`;
+    }
+
+    isLocalDevelopmentNetwork(networkUrl, chainId) {
+        const parsedChainId = Number(chainId);
+        if ([1337, 31337, 5777].includes(parsedChainId)) {
+            return true;
+        }
+
+        if (!networkUrl) {
+            return false;
+        }
+
+        try {
+            const parsed = new URL(networkUrl);
+            return ['localhost', '127.0.0.1', '0.0.0.0'].includes(parsed.hostname);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async addressHasContractCode(address) {
+        if (!address || !this.web3?.utils?.isAddress(address)) {
+            return false;
+        }
+
+        const code = await this.web3.eth.getCode(address);
+        return Boolean(code && code !== '0x');
+    }
+
+    upsertEnvValue(filePath, key, value) {
+        if (!fs.existsSync(filePath)) {
+            return false;
+        }
+
+        const keyPattern = new RegExp(`^${key}=.*$`, 'm');
+        const originalContent = fs.readFileSync(filePath, 'utf8');
+        let envContent = originalContent;
+        const nextLine = `${key}=${value}`;
+
+        if (keyPattern.test(envContent)) {
+            envContent = envContent.replace(keyPattern, nextLine);
+        } else {
+            const suffix = envContent.endsWith('\n') ? '' : '\n';
+            envContent = `${envContent}${suffix}${nextLine}\n`;
+        }
+
+        if (envContent === originalContent) {
+            return false;
+        }
+
+        fs.writeFileSync(filePath, envContent);
+        return true;
+    }
+
+    persistResolvedAddress(contractAddress) {
+        if (!contractAddress) {
+            return;
+        }
+
+        process.env.CONTRACT_ADDRESS = contractAddress;
+        blockchainConfig.development.contractAddress = contractAddress;
+
+        const backendEnvPath = path.resolve(__dirname, '../../.env');
+        if (this.upsertEnvValue(backendEnvPath, 'CONTRACT_ADDRESS', contractAddress)) {
+            console.log(`Saved CONTRACT_ADDRESS to ${backendEnvPath}`);
+        }
+
+        const frontendEnvPath = path.resolve(__dirname, '../../../frontend/.env');
+        if (this.upsertEnvValue(frontendEnvPath, 'VITE_CONTRACT_ADDRESS', contractAddress)) {
+            console.log(`Saved VITE_CONTRACT_ADDRESS to ${frontendEnvPath}`);
+        }
+    }
+
+    async resolveLocalContractAddress() {
+        const fallbackAddresses = [
+            '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+            '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+            '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
+        ];
+
+        for (const candidate of fallbackAddresses) {
+            if (await this.addressHasContractCode(candidate)) {
+                console.log(`Recovered local contract at ${candidate}`);
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    async deployLocalContract(contractJson) {
+        const bytecode = this.normalizeBytecode(contractJson?.bytecode);
+        if (!bytecode) {
+            throw new Error('Cannot auto-deploy: contract bytecode missing in artifact');
+        }
+
+        if (!this.account) {
+            throw new Error('Cannot auto-deploy: PRIVATE_KEY is missing or invalid');
+        }
+
+        const deployer = new this.web3.eth.Contract(contractJson.abi);
+        const deploymentTx = deployer.deploy({ data: bytecode });
+        const gasEstimate = await deploymentTx.estimateGas({ from: this.account });
+        const deployedInstance = await deploymentTx.send({
+            from: this.account,
+            gas: this.getGasWithBuffer(gasEstimate),
+            gasPrice: blockchainConfig.development.gasPrice
+        });
+
+        const deployedAddress = deployedInstance?.options?.address;
+        if (!deployedAddress) {
+            throw new Error('Auto-deploy completed but no contract address was returned');
+        }
+
+        console.log(`Auto-deployed local FileSharing contract at ${deployedAddress}`);
+        this.persistResolvedAddress(deployedAddress);
+        return deployedAddress;
+    }
+
     async initialize() {
         try {
             // Read contract ABI from known build output locations
@@ -79,7 +204,7 @@ class BlockchainService {
             for (const contractPath of contractPaths) {
                 if (fs.existsSync(contractPath)) {
                     contractJson = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
-                    console.log(`✅ Found contract ABI at: ${contractPath}`);
+                    console.log(`Found contract ABI at: ${contractPath}`);
                     break;
                 }
             }
@@ -87,58 +212,80 @@ class BlockchainService {
             if (contractJson?.abi) {
                 blockchainConfig.contractABI = contractJson.abi;
             } else {
-                console.error('❌ Contract ABI not found');
+                console.error('Contract ABI not found');
                 return false;
             }
 
             // Initialize Web3
             const network = blockchainConfig.development.network;
             this.web3 = new Web3(network);
-            
+
             // Check connection
             const isConnected = await this.web3.eth.net.isListening();
             if (!isConnected) {
                 throw new Error('Unable to connect to Ethereum network');
             }
 
+            const chainId = Number(await this.web3.eth.getChainId());
+            const isLocalDevNetwork = this.isLocalDevelopmentNetwork(network, chainId);
+
             // Set up account from private key
             if (blockchainConfig.development.privateKey) {
-                const privateKey = blockchainConfig.development.privateKey.startsWith('0x') 
-                    ? blockchainConfig.development.privateKey 
-                    : '0x' + blockchainConfig.development.privateKey;
-                
+                const privateKey = blockchainConfig.development.privateKey.startsWith('0x')
+                    ? blockchainConfig.development.privateKey
+                    : `0x${blockchainConfig.development.privateKey}`;
+
                 const account = this.web3.eth.accounts.privateKeyToAccount(privateKey);
                 this.web3.eth.accounts.wallet.add(account);
                 this.account = account.address;
             }
 
-            // Initialize contract
-            if (blockchainConfig.development.contractAddress && blockchainConfig.contractABI.length > 0) {
-                this.contract = new this.web3.eth.Contract(
-                    blockchainConfig.contractABI,
-                    blockchainConfig.development.contractAddress
-                );
-                // Validate that CONTRACT_ADDRESS points to deployed contract bytecode.
-                const deployedCode = await this.web3.eth.getCode(blockchainConfig.development.contractAddress);
-                if (!deployedCode || deployedCode === '0x') {
-                    throw new Error(
-                        `No contract bytecode found at CONTRACT_ADDRESS ${blockchainConfig.development.contractAddress}`
-                    );
-                }
-                console.log(`✅ Contract initialized at: ${blockchainConfig.development.contractAddress}`);
-            } else {
-                console.error('❌ Contract address or ABI missing');
+            if (!blockchainConfig.contractABI.length) {
+                console.error('Contract ABI missing');
                 return false;
             }
 
+            let contractAddress = blockchainConfig.development.contractAddress;
+            if (contractAddress && this.web3.utils.isAddress(contractAddress)) {
+                const hasCode = await this.addressHasContractCode(contractAddress);
+                if (!hasCode) {
+                    console.warn(`No contract bytecode at configured CONTRACT_ADDRESS ${contractAddress}`);
+                    contractAddress = null;
+                }
+            } else {
+                contractAddress = null;
+            }
+
+            if (!contractAddress && isLocalDevNetwork) {
+                contractAddress = await this.resolveLocalContractAddress();
+            }
+
+            if (!contractAddress && isLocalDevNetwork) {
+                contractAddress = await this.deployLocalContract(contractJson);
+            }
+
+            if (!contractAddress) {
+                throw new Error(
+                    `No contract bytecode found at CONTRACT_ADDRESS ${blockchainConfig.development.contractAddress}`
+                );
+            }
+
+            this.persistResolvedAddress(contractAddress);
+            this.contract = new this.web3.eth.Contract(
+                blockchainConfig.contractABI,
+                contractAddress
+            );
+
             this.initialized = true;
-            console.log('✅ Blockchain service initialized successfully');
-            console.log(`📡 Network: ${network}`);
-            console.log(`👤 Account: ${this.account || 'Not set'}`);
-            
+            console.log('Blockchain service initialized successfully');
+            console.log(`Network: ${network}`);
+            console.log(`Chain ID: ${chainId}`);
+            console.log(`Account: ${this.account || 'Not set'}`);
+            console.log(`Contract initialized at: ${contractAddress}`);
+
             return true;
         } catch (error) {
-            console.error('❌ Failed to initialize blockchain service:', error.message);
+            console.error('Failed to initialize blockchain service:', error.message);
             this.initialized = false;
             return false;
         }
@@ -413,6 +560,7 @@ class BlockchainService {
                 isValid,
                 message: isValid ? 'File matches blockchain record' : 'File does not match blockchain record',
                 fileId: fileDetails.file.id,
+                storedHash,
                 fileName: fileDetails.file.fileName,
                 fileSize: fileDetails.file.fileSize,
                 owner: fileDetails.file.owner,

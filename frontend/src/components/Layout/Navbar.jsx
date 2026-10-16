@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useWeb3 } from '../../context/Web3Context';
 import WalletConnector from '../Blockchain/WalletConnector';
+import { CpuChipIcon, BellAlertIcon } from '@heroicons/react/24/outline';
 import { 
   HomeIcon, 
   FolderIcon, 
@@ -27,7 +28,7 @@ const Navbar = () => {
         <div className="flex justify-between h-16">
           <div className="flex">
             <Link to="/dashboard" className="flex items-center">
-              <span className="text-xl font-bold text-blue-600">BlockShare</span>
+              <span className="text-xl font-bold text-blue-600">Blockchainfilesharing</span>
             </Link>
             <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
               <Link
@@ -44,6 +45,22 @@ const Navbar = () => {
                 <FolderIcon className="h-5 w-5 mr-1" />
                 My Files
               </Link>
+              
+
+<Link
+  to="/scanner"
+  className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"
+>
+  <CpuChipIcon className="h-5 w-5 mr-1" />
+  AI Scanner
+</Link>
+<Link
+  to="/ai-alerts"
+  className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"
+>
+  <BellAlertIcon className="h-5 w-5 mr-1" />
+  AI Alerts
+</Link>
               <Link
                 to="/feedback"
                 className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-500 hover:text-gray-900"

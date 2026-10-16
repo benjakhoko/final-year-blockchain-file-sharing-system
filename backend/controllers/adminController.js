@@ -159,10 +159,15 @@ exports.getAllFiles = async (req, res, next) => {
 // @access  Private/Admin
 exports.getTamperedFiles = async (req, res, next) => {
     try {
-        const files = await File.find({ 
-            status: 'compromised',
-            integrityVerified: false
-        }).populate('owner', 'name email');
+        const files = await File.find({
+            $or: [
+                { status: 'compromised' },
+                { integrityVerified: false }
+            ],
+            status: { $ne: 'deleted' }
+        })
+            .populate('owner', 'name email')
+            .sort('-updatedAt');
 
         res.json({
             success: true,
@@ -309,7 +314,14 @@ exports.getSystemStats = async (req, res, next) => {
         const activeUsers = await User.countDocuments({ isActive: true });
         const totalFiles = await File.countDocuments();
         const activeFiles = await File.countDocuments({ status: 'active' });
-        const tamperedFiles = await File.countDocuments({ status: 'compromised' });
+        const tamperedFiles = await File.countDocuments({
+            $or: [
+                { status: 'compromised' },
+                { integrityVerified: false }
+            ],
+            status: { $ne: 'deleted' }
+        });
+        const deletedFiles = await File.countDocuments({ status: 'deleted' });
         const totalDownloads = await File.aggregate([
             { $group: { _id: null, total: { $sum: '$downloads' } } }
         ]);
@@ -332,7 +344,7 @@ exports.getSystemStats = async (req, res, next) => {
                     total: totalFiles,
                     active: activeFiles,
                     tampered: tamperedFiles,
-                    deleted: totalFiles - activeFiles - tamperedFiles
+                    deleted: deletedFiles
                 },
                 downloads: totalDownloads[0]?.total || 0,
                 recentActivities

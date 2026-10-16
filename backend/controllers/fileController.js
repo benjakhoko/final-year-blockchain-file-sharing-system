@@ -5,8 +5,29 @@ const ActivityLog = require('../models/ActivityLog');
 const { calculateFileHash, formatBytes } = require('../utils/fileUtils');
 const blockchainService = require('../services/blockchainService');
 const encryptionService = require('../utils/encryption');
+const mlService = require('../services/mlService'); // <-- ML service
+const riskAssessmentService = require('../services/riskAssessmentService'); // <-- access risk service
 const fs = require('fs').promises;
 const path = require('path');
+const { sendEmail } = require('../config/email');
+const emailTemplates = require('../utils/emailTemplates');
+
+// Helper: compute Shannon entropy of a buffer
+function calculateEntropy(buffer) {
+    if (!buffer || buffer.length === 0) return 0;
+    const byteCount = new Array(256).fill(0);
+    for (const byte of buffer) {
+        byteCount[byte] += 1;
+    }
+    const len = buffer.length;
+    let entropy = 0;
+    for (let i = 0; i < 256; i++) {
+        if (byteCount[i] === 0) continue;
+        const p = byteCount[i] / len;
+        entropy -= p * Math.log2(p);
+    }
+    return entropy;
+}
 
 // Initialize blockchain service on startup (handle gracefully)
 const initBlockchain = async () => {
@@ -18,7 +39,7 @@ const initBlockchain = async () => {
 };
 initBlockchain();
 
-// @desc    Upload file with encryption
+// @desc    Upload file with encryption + ML classification
 // @route   POST /api/files/upload
 // @access  Private
 exports.uploadFile = async (req, res, next) => {
@@ -32,23 +53,23 @@ exports.uploadFile = async (req, res, next) => {
 
         // Read the uploaded file
         const fileBuffer = await fs.readFile(req.file.path);
-        
+
         // Generate encryption key for this file
         const encryptionKey = encryptionService.generateFileKey();
-        
+
         // Encrypt the file
         const { encryptedData, iv } = encryptionService.encryptFile(fileBuffer, encryptionKey);
-        
+
         // Calculate hash of the encrypted file (for integrity)
         const fileHash = encryptionService.hashFile(encryptedData);
-        
+
         // Save encrypted file
         const encryptedFilePath = req.file.path + '.enc';
         await fs.writeFile(encryptedFilePath, encryptedData);
-        
+
         // Delete original unencrypted file
         await fs.unlink(req.file.path);
-        
+
         // Check if file already exists (duplicate by hash)
         const existingFile = await File.findOne({
             fileHash,
@@ -59,7 +80,7 @@ exports.uploadFile = async (req, res, next) => {
         if (existingFile) {
             // Remove the encrypted file if it's a duplicate
             await fs.unlink(encryptedFilePath);
-            
+
             return res.status(400).json({
                 success: false,
                 message: 'File already exists in your storage'
@@ -114,6 +135,76 @@ exports.uploadFile = async (req, res, next) => {
             } catch (logAccessError) {
                 console.error('Blockchain access log failed:', logAccessError.message);
             }
+        }
+
+        // ========== ML FILE CLASSIFICATION AND ACCESS RISK DETECTION (NEW) ==========
+        try {
+            const entropy = calculateEntropy(fileBuffer);
+            const ext = path.extname(req.file.originalname).toLowerCase();
+
+            const fileStats = {
+                size: req.file.size / 1024,
+                file_size_kb: req.file.size / 1024,
+                entropy: entropy,
+                is_executable: ['.exe', '.dll', '.jar', '.js', '.vbs'].includes(ext) ? 1 : 0,
+                is_archive: ['.zip', '.rar', '.7z', '.tar'].includes(ext) ? 1 : 0,
+                is_doc: ['.docx', '.pdf', '.xlsx', '.txt', '.csv'].includes(ext) ? 1 : 0,
+                extension: ext.slice(1).toLowerCase()
+            };
+
+            const mlResult = await mlService.classifyFile(fileStats);
+            file.riskScore = mlResult.probability * 100;
+            file.riskLevel = file.riskScore > 66 ? 'high' : file.riskScore > 33 ? 'medium' : 'low';
+            file.lastRiskAssessment = new Date();
+            await file.save();
+
+            if (mlResult.malicious === 1 && mlResult.probability > 0.7) {
+                await ActivityLog.create({
+                    user: req.user._id,
+                    action: 'MALICIOUS_FILE_DETECTED',
+                    resourceType: 'file',
+                    resourceId: file._id,
+                    details: {
+                        fileName: file.fileName,
+                        probability: mlResult.probability,
+                        recommendation: 'Review file'
+                    }
+                });
+                console.warn(`⚠️ Suspicious file uploaded: ${file.fileName} (prob: ${mlResult.probability})`);
+                // Optionally send admin alert email here
+            }
+
+            // Access-related risk assessment
+            const accessContext = {
+                fileId: file._id,
+                userId: req.user._id,
+                fileStats: {
+                    size: file.fileSize / 1024,
+                    entropy: entropy,
+                    is_executable: ['.exe', '.dll', '.jar', '.js', '.vbs'].includes(ext) ? 1 : 0,
+                    is_archive: ['.zip', '.rar', '.7z', '.tar'].includes(ext) ? 1 : 0,
+                    is_doc: ['.docx', '.pdf', '.xlsx', '.txt', '.csv'].includes(ext) ? 1 : 0,
+                    extension: ext.slice(1).toLowerCase()
+                },
+                sharingStats: null,
+                ipAddress: req.ip,
+                userAgent: req.get('user-agent'),
+                accessTime: new Date(),
+                userDownloadCount: 0,
+                fileDownloadCount: file.downloads,
+                isFirstAccess: true,
+                deviceNew: 0,
+                sensitiveFile: (file.mimeType && (file.mimeType.includes('pdf') || file.mimeType.includes('doc'))) ? true : false
+            };
+
+            const riskResult = await riskAssessmentService.computeAccessRisk(accessContext);
+            file.riskScore = riskResult.riskScore;
+            file.riskLevel = riskResult.riskLevel;
+            file.lastRiskAssessment = new Date();
+            await file.save();
+        } catch (mlError) {
+            console.error('ML classification failed:', mlError.message);
+            // Do not block upload
         }
 
         // Log activity
@@ -309,7 +400,7 @@ exports.deleteFile = async (req, res, next) => {
     }
 };
 
-// @desc    Share file with user
+// @desc    Share file with user (with abnormal sharing detection)
 // @route   POST /api/files/:fileId/share
 // @access  Private
 exports.shareFile = async (req, res, next) => {
@@ -353,6 +444,49 @@ exports.shareFile = async (req, res, next) => {
                 success: false,
                 message: 'File not found'
             });
+        }
+
+        // ========== ML ABNORMAL SHARING DETECTION (NEW) ==========
+        try {
+            // Get recent shares in the last hour
+            const recentShares = await ActivityLog.find({
+                user: req.user._id,
+                action: 'SHARE_FILE',
+                createdAt: { $gte: new Date(Date.now() - 3600000) } // last hour
+            });
+
+            // Build sharing stats
+            const sharingStats = {
+                files_shared: recentShares.length + 1, // current share + previous
+                recipients: 1, // only one recipient per share in this endpoint
+                avg_size_kb: file.fileSize / 1024,
+                sensitive: (file.mimeType && (file.mimeType.includes('pdf') || file.mimeType.includes('doc'))) ? 1 : 0,
+                device_new: 0, // you can track based on IP/user-agent history
+                time_anomaly: (new Date().getHours() < 6 || new Date().getHours() > 22) ? 1 : 0
+            };
+
+            const mlResult = await mlService.detectAbnormalSharing(sharingStats);
+            if (mlResult.abnormal === 1 && mlResult.risk === 'high') {
+                // Log alert
+                await ActivityLog.create({
+                    user: req.user._id,
+                    action: 'ABNORMAL_SHARING_DETECTED',
+                    resourceType: 'file',
+                    resourceId: file._id,
+                    details: {
+                        fileName: file.fileName,
+                        risk: mlResult.risk,
+                        sharedWith: userToShare.email,
+                        probability: mlResult.probability
+                    }
+                });
+                console.warn(`⚠️ Abnormal sharing detected: ${file.fileName} -> ${userToShare.email} (risk: ${mlResult.risk})`);
+                // Optionally block the share or ask for 2FA here
+                // For now we proceed, but you could return an error.
+            }
+        } catch (mlError) {
+            console.error('ML abnormal sharing detection failed:', mlError.message);
+            // Do not block the share
         }
 
         // Check if already shared with user
@@ -426,6 +560,25 @@ exports.shareFile = async (req, res, next) => {
             ipAddress: req.ip,
             userAgent: req.get('user-agent')
         });
+
+        // Send email notification
+        try {
+            if (userToShare.email) {
+                const template = emailTemplates.fileShared(
+                    file.fileName,
+                    req.user.name,
+                    resolvedAccessType
+                );
+                await sendEmail({
+                    to: userToShare.email,
+                    subject: template.subject,
+                    html: template.html
+                });
+            }
+        } catch (emailError) {
+            console.error('Failed to send share notification email:', emailError);
+            // Do not block response
+        }
 
         res.json({
             success: true,
@@ -539,7 +692,7 @@ exports.downloadFile = async (req, res, next) => {
             file.status = 'compromised';
             file.integrityVerified = false;
             await file.save({ validateBeforeSave: false });
-            
+
             return res.status(404).json({
                 success: false,
                 message: 'File not found on server'
@@ -548,7 +701,7 @@ exports.downloadFile = async (req, res, next) => {
 
         // Read encrypted file
         const encryptedData = await fs.readFile(file.filePath);
-        
+
         // Verify integrity before decryption
         const currentHash = encryptionService.hashFile(encryptedData);
         if (currentHash !== file.fileHash) {
@@ -556,7 +709,7 @@ exports.downloadFile = async (req, res, next) => {
             file.integrityVerified = false;
             file.status = 'compromised';
             await file.save({ validateBeforeSave: false });
-            
+
             await ActivityLog.create({
                 user: req.user._id,
                 action: 'TAMPER_DETECTED',
@@ -571,13 +724,13 @@ exports.downloadFile = async (req, res, next) => {
                 ipAddress: req.ip,
                 userAgent: req.get('user-agent')
             });
-            
+
             return res.status(409).json({
                 success: false,
                 message: 'File integrity compromised. Cannot download.'
             });
         }
-        
+
         let filePayload = encryptedData;
 
         if (isEncryptedFile) {
@@ -603,7 +756,7 @@ exports.downloadFile = async (req, res, next) => {
                 });
             }
         }
-        
+
         // Increment download count
         file.downloads += 1;
         await file.save({ validateBeforeSave: false });
@@ -627,7 +780,7 @@ exports.downloadFile = async (req, res, next) => {
         res.setHeader('Content-Type', file.mimeType);
         res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
         res.send(filePayload);
-        
+
     } catch (error) {
         console.error('Download error:', error);
         next(error);
@@ -670,7 +823,7 @@ exports.verifyFileIntegrity = async (req, res, next) => {
             file.status = 'compromised';
             file.integrityVerified = false;
             await file.save({ validateBeforeSave: false });
-            
+
             return res.status(200).json({
                 success: true,
                 fileId: file._id,
@@ -693,7 +846,7 @@ exports.verifyFileIntegrity = async (req, res, next) => {
 
         // Read encrypted file
         const encryptedData = await fs.readFile(file.filePath);
-        
+
         // Calculate current hash
         const currentHash = encryptionService.hashFile(encryptedData);
         const localVerified = currentHash === file.fileHash;
@@ -710,7 +863,7 @@ exports.verifyFileIntegrity = async (req, res, next) => {
                     file.blockchainFileId,
                     file.fileHash
                 );
-                
+
                 if (blockchainResult) {
                     if (blockchainResult.exists === false) {
                         // Treat missing blockchain records as unavailable metadata,
@@ -751,14 +904,14 @@ exports.verifyFileIntegrity = async (req, res, next) => {
         // Update file integrity status
         file.integrityVerified = isIntact;
         file.lastVerified = new Date();
-        
+
         if (isIntact && file.status !== 'active') {
             file.status = 'active';
         }
-        
+
         if (!isIntact && file.status !== 'compromised') {
             file.status = 'compromised';
-            
+
             // Log tamper detection
             await ActivityLog.create({
                 user: req.user._id,

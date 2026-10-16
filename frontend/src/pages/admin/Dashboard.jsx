@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import adminService from '../../services/adminService';
 import {
   UsersIcon,
   DocumentIcon,
   ShieldExclamationIcon,
   ArrowDownTrayIcon,
+  ArrowLeftIcon,
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
 
@@ -23,7 +25,7 @@ const AdminDashboard = () => {
       const response = await adminService.getSystemStats();
       setStats(response.stats);
       setRecentActivities(response.stats.recentActivities || []);
-    } catch (error) {
+    } catch {
       toast.error('Failed to fetch system stats');
     } finally {
       setLoading(false);
@@ -72,7 +74,16 @@ const AdminDashboard = () => {
   return (
     <div className="py-6">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">
-        <h1 className="text-2xl font-semibold text-gray-900">Admin Dashboard</h1>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-semibold text-gray-900">Admin Dashboard</h1>
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 hover:text-gray-900"
+          >
+            <ArrowLeftIcon className="mr-2 h-4 w-4" />
+            Back to User Dashboard
+          </Link>
+        </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8">

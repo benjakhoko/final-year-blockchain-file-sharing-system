@@ -2,28 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+@layer base {
+  body {
+    @apply bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
 }
 
-html,
-body,
-#root {
-  width: 100%;
-  min-height: 100%;
-}
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background-color: #f3f4f6;
-  color: #111827;
-}
-
-a {
-  text-decoration: none;
+@layer components {
+  .glass-card {
+    @apply bg-white/10 backdrop-blur-lg rounded-2xl shadow-xl border border-white/20;
+  }
+  
+  .glass-card-dark {
+    @apply bg-black/30 backdrop-blur-lg rounded-2xl shadow-xl border border-white/10;
+  }
+  
+  .gradient-text {
+    @apply bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent;
+  }
+  
+  .btn-primary {
+    @apply px-4 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg hover:from-blue-600 hover:to-purple-700 transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50;
+  }
+  
+  .btn-secondary {
+    @apply px-4 py-2 bg-white/10 backdrop-blur text-white rounded-lg border border-white/20 hover:bg-white/20 transition-all duration-200;
+  }
+  
+  .input-glass {
+    @apply w-full px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+  }
 }

@@ -1,15 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import adminService from '../../services/adminService';
 import { 
   UserIcon, 
   EnvelopeIcon, 
   CalendarIcon,
-  ShieldCheckIcon,
   TrashIcon,
   PauseIcon,
   PlayIcon 
 } from '@heroicons/react/24/outline';
 import toast from 'react-hot-toast';
+
+const getErrorMessage = (error, fallback) => (
+  error.response?.data?.message || error.message || fallback
+);
+
+const formatDate = (value) => {
+  if (!value) return '-';
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleDateString();
+};
 
 const AdminUsers = () => {
   const [users, setUsers] = useState([]);
@@ -17,22 +27,22 @@ const AdminUsers = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  useEffect(() => {
-    fetchUsers();
-  }, [page]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       const response = await adminService.getUsers(page);
-      setUsers(response.users);
-      setTotalPages(response.pages);
+      setUsers(Array.isArray(response.users) ? response.users : []);
+      setTotalPages(Number(response.pages) || 1);
     } catch (error) {
-      toast.error('Failed to fetch users');
+      toast.error(getErrorMessage(error, 'Failed to fetch users'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [page]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
 
   const handleToggleStatus = async (userId) => {
     try {
@@ -40,7 +50,7 @@ const AdminUsers = () => {
       toast.success(response.message);
       fetchUsers();
     } catch (error) {
-      toast.error('Failed to update user status');
+      toast.error(getErrorMessage(error, 'Failed to update user status'));
     }
   };
 
@@ -54,7 +64,7 @@ const AdminUsers = () => {
       toast.success('User deleted successfully');
       fetchUsers();
     } catch (error) {
-      toast.error('Failed to delete user');
+      toast.error(getErrorMessage(error, 'Failed to delete user'));
     }
   };
 
@@ -128,15 +138,15 @@ const AdminUsers = () => {
                         </td>
                         <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            user.isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                            user.isActive !== false ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                           }`}>
-                            {user.isActive ? 'Active' : 'Inactive'}
+                            {user.isActive !== false ? 'Active' : 'Inactive'}
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500">
                           <div className="flex items-center">
                             <CalendarIcon className="h-4 w-4 mr-1 text-gray-400" />
-                            {new Date(user.createdAt).toLocaleDateString()}
+                            {formatDate(user.createdAt)}
                           </div>
                         </td>
                         <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
@@ -144,13 +154,13 @@ const AdminUsers = () => {
                             <button
                               onClick={() => handleToggleStatus(user._id)}
                               className={`inline-flex items-center p-1 rounded-md ${
-                                user.isActive 
+                                user.isActive !== false 
                                   ? 'text-yellow-600 hover:bg-yellow-100' 
                                   : 'text-green-600 hover:bg-green-100'
                               }`}
-                              title={user.isActive ? 'Deactivate' : 'Activate'}
+                              title={user.isActive !== false ? 'Deactivate' : 'Activate'}
                             >
-                              {user.isActive ? (
+                              {user.isActive !== false ? (
                                 <PauseIcon className="h-5 w-5" />
                               ) : (
                                 <PlayIcon className="h-5 w-5" />

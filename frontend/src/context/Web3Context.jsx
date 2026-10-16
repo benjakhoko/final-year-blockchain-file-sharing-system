@@ -11,9 +11,15 @@ export const Web3Provider = ({ children }) => {
   const [account, setAccount] = useState(null);
   const [chainId, setChainId] = useState(null);
   const [contract, setContract] = useState(null);
+  const [activeContractAddress, setActiveContractAddress] = useState(null);
   const [loading, setLoading] = useState(false);
   const [isMetaMaskInstalled, setIsMetaMaskInstalled] = useState(false);
   const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS || '0x9f9276F6541881CAE49a7010131Cb3058eA46733';
+  const knownLocalAddresses = [
+    '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+    '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+    '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0'
+  ];
   
   // Contract ABI - Replace with your actual ABI from the artifacts
   const contractABI = [
@@ -189,8 +195,153 @@ export const Web3Provider = ({ children }) => {
       ],
       "stateMutability": "nonpayable",
       "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getFileCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "files",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "fileHash",
+          "type": "string"
+        },
+        {
+          "internalType": "string",
+          "name": "fileName",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "fileSize",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "timestamp",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isActive",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "isPublic",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
     }
   ];
+
+  const normalizeFileId = (value) => {
+    if (value === undefined || value === null) return null;
+    const normalized = String(value).trim();
+    if (!/^\d+$/.test(normalized)) return null;
+    try {
+      return BigInt(normalized) > 0n ? normalized : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getErrorMessage = (error) => {
+    return (
+      error?.reason ||
+      error?.message ||
+      error?.data?.message ||
+      error?.data?.originalError?.message ||
+      'Unknown blockchain error'
+    );
+  };
+
+  const isMissingFileError = (message) => {
+    const normalized = String(message || '').toLowerCase();
+    return (
+      normalized.includes('file does not exist') ||
+      normalized.includes('execution reverted') ||
+      normalized.includes('missing revert data')
+    );
+  };
+
+  const isInvalidContractCallError = (message) => {
+    const normalized = String(message || '').toLowerCase();
+    return (
+      normalized.includes("returned values aren't valid") ||
+      normalized.includes('could not decode result data') ||
+      normalized.includes('invalid response')
+    );
+  };
+
+  const toLocaleTimestamp = (timestampRaw) => {
+    const value = Number(timestampRaw || 0);
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    return new Date(value * 1000).toLocaleString();
+  };
+
+  const resolveContractInstance = async (web3Instance, preferredAddress = null) => {
+    if (!web3Instance) return null;
+
+    const candidates = [preferredAddress, contractAddress, ...knownLocalAddresses]
+      .filter((address) => typeof address === 'string' && address.trim().length > 0);
+
+    const uniqueCandidates = candidates.filter((address, index) => {
+      return candidates.findIndex((item) => item.toLowerCase() === address.toLowerCase()) === index;
+    });
+
+    for (const address of uniqueCandidates) {
+      if (!web3Instance.utils.isAddress(address)) {
+        continue;
+      }
+
+      try {
+        const code = await web3Instance.eth.getCode(address);
+        if (code && code !== '0x') {
+          return {
+            instance: new web3Instance.eth.Contract(contractABI, address),
+            address
+          };
+        }
+      } catch (error) {
+        console.error(`Error checking contract code at ${address}:`, error);
+      }
+    }
+
+    return null;
+  };
 
   useEffect(() => {
     checkMetaMask();
@@ -230,11 +381,15 @@ export const Web3Provider = ({ children }) => {
 
       // Initialize contract
       const web3Instance = new Web3(window.ethereum);
-      const contractInstance = new web3Instance.eth.Contract(
-        contractABI,
-        contractAddress
-      );
-      setContract(contractInstance);
+      const resolvedContract = await resolveContractInstance(web3Instance, contractAddress);
+      if (!resolvedContract) {
+        setContract(null);
+        setActiveContractAddress(null);
+        toast.error('No deployed FileSharing contract found on this network');
+      } else {
+        setContract(resolvedContract.instance);
+        setActiveContractAddress(resolvedContract.address);
+      }
 
       // Setup event listeners
       window.ethereum.on('accountsChanged', handleAccountsChanged);
@@ -273,6 +428,7 @@ export const Web3Provider = ({ children }) => {
       // User disconnected
       setAccount(null);
       setContract(null);
+      setActiveContractAddress(null);
       toast.info('Wallet disconnected');
     } else {
       setAccount(accounts[0]);
@@ -289,40 +445,172 @@ export const Web3Provider = ({ children }) => {
   const disconnectWallet = () => {
     setAccount(null);
     setContract(null);
+    setActiveContractAddress(null);
     toast.success('Wallet disconnected');
   };
 
   const verifyFileOnBlockchain = async (fileId, fileHash, options = {}) => {
     const { notifyOnError = true } = options;
 
-    if (!contract || !account) {
+    if (!account) {
       if (notifyOnError) {
         toast.error('Please connect your wallet first');
       }
       return null;
     }
 
+    if (!contract) {
+      if (notifyOnError) {
+        toast.error('Blockchain contract is not available on this network');
+      }
+      return null;
+    }
+
     try {
       setLoading(true);
-      const details = await contract.methods.getFileDetails(fileId).call();
+      const normalizedFileId = normalizeFileId(fileId);
+      if (!normalizedFileId) {
+        if (notifyOnError) {
+          toast.error('Invalid blockchain file ID');
+        }
+        return null;
+      }
+
+      let activeContract = contract;
+      let resolvedAddress = activeContractAddress || activeContract?.options?.address || contractAddress;
+
+      if (web3 && resolvedAddress) {
+        const deployedCode = await web3.eth.getCode(resolvedAddress);
+        if (!deployedCode || deployedCode === '0x') {
+          const resolvedContract = await resolveContractInstance(web3, resolvedAddress);
+          if (resolvedContract) {
+            activeContract = resolvedContract.instance;
+            resolvedAddress = resolvedContract.address;
+            setContract(activeContract);
+            setActiveContractAddress(resolvedAddress);
+          }
+        }
+      }
+
+      if (activeContract?.methods?.getFileCount) {
+        try {
+          const totalFiles = await activeContract.methods.getFileCount().call();
+          if (BigInt(normalizedFileId) > BigInt(totalFiles)) {
+            return {
+              success: false,
+              exists: false,
+              matches: false,
+              isValid: false,
+              message: 'File is not present on the current blockchain contract'
+            };
+          }
+        } catch (countError) {
+          // Continue with direct record lookup if count endpoint is unavailable.
+        }
+      }
+
+      let details;
+      try {
+        details = await activeContract.methods.getFileDetails(normalizedFileId).call();
+      } catch (detailsError) {
+        const detailsErrorMessage = getErrorMessage(detailsError);
+        if (activeContract?.methods?.files) {
+          try {
+            details = await activeContract.methods.files(normalizedFileId).call();
+          } catch (mappingError) {
+            const mappingErrorMessage = getErrorMessage(mappingError);
+            if (isMissingFileError(mappingErrorMessage)) {
+              return {
+                success: false,
+                exists: false,
+                matches: false,
+                isValid: false,
+                message: 'File not found on blockchain'
+              };
+            }
+            if (isInvalidContractCallError(mappingErrorMessage)) {
+              return {
+                success: false,
+                exists: false,
+                matches: false,
+                isValid: false,
+                message: 'No deployed FileSharing contract found on current wallet network'
+              };
+            }
+            throw mappingError;
+          }
+        } else if (isMissingFileError(detailsErrorMessage)) {
+          return {
+            success: false,
+            exists: false,
+            matches: false,
+            isValid: false,
+            message: 'File not found on blockchain'
+          };
+        } else if (isInvalidContractCallError(detailsErrorMessage)) {
+          return {
+            success: false,
+            exists: false,
+            matches: false,
+            isValid: false,
+            message: 'No deployed FileSharing contract found on current wallet network'
+          };
+        } else {
+          throw detailsError;
+        }
+      }
 
       const blockchainHash = details.fileHash || details[1];
-      const owner = details.fileOwner || details[4];
+      const owner = details.fileOwner || details.owner || details[4];
       const timestampRaw = details.timestamp || details[5];
       const isActive = details.isActive ?? details[6];
+
+      if (!blockchainHash || Number(timestampRaw || 0) === 0) {
+        return {
+          success: false,
+          exists: false,
+          matches: false,
+          isValid: false,
+          message: 'File not found on blockchain'
+        };
+      }
+
       const matches = blockchainHash === fileHash;
       
       return {
         success: true,
+        exists: true,
         matches,
         isValid: matches,
         blockchainHash,
         owner,
-        timestamp: new Date(Number(timestampRaw) * 1000).toLocaleString(),
+        timestamp: toLocaleTimestamp(timestampRaw),
         isActive
       };
     } catch (error) {
       console.error('Error verifying file:', error);
+      const errorMessage = getErrorMessage(error);
+
+      if (isMissingFileError(errorMessage)) {
+        return {
+          success: false,
+          exists: false,
+          matches: false,
+          isValid: false,
+          message: 'File not found on blockchain'
+        };
+      }
+
+      if (isInvalidContractCallError(errorMessage)) {
+        return {
+          success: false,
+          exists: false,
+          matches: false,
+          isValid: false,
+          message: 'No deployed FileSharing contract found on current wallet network'
+        };
+      }
+
       if (notifyOnError) {
         toast.error('Failed to verify file on blockchain');
       }
@@ -333,13 +621,38 @@ export const Web3Provider = ({ children }) => {
   };
 
   const logAccess = async (fileId, action) => {
-    if (!contract || !account) {
+    if (!account) {
       toast.error('Please connect your wallet first');
       return false;
     }
 
+    if (!contract) {
+      toast.error('Blockchain contract is not available on this network');
+      return false;
+    }
+
     try {
-      await contract.methods.logFileAccess(fileId, action).send({
+      const normalizedFileId = normalizeFileId(fileId);
+      if (!normalizedFileId) {
+        return false;
+      }
+
+      let activeContract = contract;
+      let resolvedAddress = activeContractAddress || activeContract?.options?.address || contractAddress;
+
+      if (web3 && resolvedAddress) {
+        const deployedCode = await web3.eth.getCode(resolvedAddress);
+        if (!deployedCode || deployedCode === '0x') {
+          const resolvedContract = await resolveContractInstance(web3, resolvedAddress);
+          if (resolvedContract) {
+            activeContract = resolvedContract.instance;
+            setContract(activeContract);
+            setActiveContractAddress(resolvedContract.address);
+          }
+        }
+      }
+
+      await activeContract.methods.logFileAccess(normalizedFileId, action).send({
         from: account
       });
       return true;
@@ -354,6 +667,7 @@ export const Web3Provider = ({ children }) => {
     account,
     chainId,
     contract,
+    activeContractAddress,
     loading,
     isMetaMaskInstalled,
     connectWallet,

@@ -12,13 +12,12 @@ import ShareModal from './ShareModal';
 import toast from 'react-hot-toast';
 import { useWeb3 } from '../../context/Web3Context';
 
-const FileList = ({ refreshTrigger }) => {
+const FileList = ({ refreshTrigger, showMaliciousBadge = true }) => {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [verifying, setVerifying] = useState({});
-  const [blockchainVerifying, setBlockchainVerifying] = useState({});
   const [blockchainStatus, setBlockchainStatus] = useState({});
   const { account, verifyFileOnBlockchain } = useWeb3();
 
@@ -50,12 +49,16 @@ const FileList = ({ refreshTrigger }) => {
       );
 
       const verified = !!result?.isValid;
+      const verificationError = result
+        ? (result.success === false ? (result.message || 'Verification unavailable') : null)
+        : 'Verification failed';
+
       setBlockchainStatus((prev) => ({
         ...prev,
         [file.id]: {
           checked: !!result,
           verified,
-          error: result ? null : 'Verification failed'
+          error: verificationError
         }
       }));
 
@@ -113,8 +116,10 @@ const FileList = ({ refreshTrigger }) => {
       link.click();
       link.remove();
       toast.success('Download started');
-    } catch {
-      toast.error('Failed to download file');
+    } catch (error) {
+      const message = error?.response?.data?.message || 'Failed to download file';
+      toast.error(message);
+      fetchFiles();
     }
   };
 
@@ -138,7 +143,9 @@ const FileList = ({ refreshTrigger }) => {
       let blockchainVerified = false;
       if (account && file.blockchainFileId && file.fileHash) {
         const blockchainResult = await verifyOnBlockchain(file, showBlockchainToast);
-        if (blockchainResult?.isValid) {
+        if (blockchainResult?.exists === false) {
+          toast.error(blockchainResult.message || 'File not found on current blockchain contract');
+        } else if (blockchainResult?.isValid) {
           toast.success('Blockchain verification successful');
           blockchainVerified = true;
         } else if (blockchainResult) {
@@ -155,18 +162,6 @@ const FileList = ({ refreshTrigger }) => {
       return { serverVerified: false, blockchainVerified: false };
     } finally {
       setVerifying((prev) => ({ ...prev, [file.id]: false }));
-    }
-  };
-
-  // Standalone blockchain verification (for when you only want to check blockchain)
-  const verifyBlockchainOnly = async (file) => {
-    const result = await verifyOnBlockchain(file, true);
-    if (!result) return;
-
-    if (result.isValid) {
-      toast.success('File matches blockchain record');
-    } else {
-      toast.error('File does not match blockchain record');
     }
   };
 
@@ -218,6 +213,15 @@ const FileList = ({ refreshTrigger }) => {
                           <p className="text-sm font-medium text-blue-600 truncate">
                             {file.fileName}
                           </p>
+
+                          {/* ===== MALICIOUS BADGE (NEW) ===== */}
+                          {showMaliciousBadge && file.mlStatus?.malicious && (
+                            <span className="ml-1 px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">
+                              ⚠️ Malicious
+                            </span>
+                          )}
+                          {/* ================================= */}
+
                           {/* Encryption Badge */}
                           {file.isEncrypted && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
@@ -265,23 +269,6 @@ const FileList = ({ refreshTrigger }) => {
                       >
                         <ShieldCheckIcon className="h-5 w-5" />
                       </button>
-
-                      {file.blockchainFileId && (
-                        <button
-                          onClick={() => verifyBlockchainOnly(file)}
-                          disabled={blockchainVerifying[file.id]}
-                          className={`p-2 disabled:opacity-50 ${
-                            chainVerified ? 'text-blue-600' : 'text-gray-400 hover:text-purple-600'
-                          }`}
-                          title={chainVerified ? 'Blockchain verified' : 'Verify on Blockchain'}
-                        >
-                          {blockchainVerifying[file.id] ? (
-                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                          ) : (
-                            <ShieldCheckIcon className="h-5 w-5" />
-                          )}
-                        </button>
-                      )}
 
                       <button
                         onClick={() => handleDownload(file.id, file.fileName)}

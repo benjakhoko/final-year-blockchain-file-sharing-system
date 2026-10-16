@@ -89,6 +89,22 @@ const fileSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    // Risk-based access control fields
+    riskScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    riskLevel: {
+        type: String,
+        enum: ['low', 'medium', 'high'],
+        default: 'low'
+    },
+    lastRiskAssessment: {
+        type: Date,
+        default: Date.now
+    },
     status: {
         type: String,
         enum: ['active', 'deleted', 'compromised'],

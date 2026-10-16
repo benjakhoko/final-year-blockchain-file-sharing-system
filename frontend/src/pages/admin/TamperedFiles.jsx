@@ -21,9 +21,12 @@ const TamperedFiles = () => {
     try {
       setLoading(true);
       const response = await adminService.getTamperedFiles();
-      setFiles(response.files);
+      setFiles(response?.files || []);
     } catch (error) {
-      toast.error('Failed to fetch tampered files');
+      const message = error.response?.data?.message || error.message || 'Failed to fetch tampered files';
+      console.error('Failed to fetch tampered files:', error);
+      setFiles([]);
+      toast.error(message);
     } finally {
       setLoading(false);
     }

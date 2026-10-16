@@ -6,6 +6,11 @@ const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
+const getErrorMessage = (error, fallback) => {
+  const validationMessage = error.response?.data?.errors?.[0]?.msg;
+  return error.response?.data?.message || validationMessage || error.message || fallback;
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token'));
@@ -55,31 +60,26 @@ export const AuthProvider = ({ children }) => {
       toast.success('Login successful!');
       return { success: true };
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Login failed');
-      return { success: false, error: error.response?.data?.message };
+      const message = getErrorMessage(error, 'Login failed');
+      toast.error(message);
+      return { success: false, error: message };
     }
   };
 
   const register = async (name, email, password) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/register', {
+      await axios.post('http://localhost:5000/api/auth/register', {
         name,
         email,
         password
       });
-
-      const { token, user } = response.data;
       
-      localStorage.setItem('token', token);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      setToken(token);
-      setUser(user);
-      
-      toast.success('Registration successful!');
+      toast.success('Registration successful! Please sign in.');
       return { success: true };
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Registration failed');
-      return { success: false, error: error.response?.data?.message };
+      const message = getErrorMessage(error, 'Registration failed');
+      toast.error(message);
+      return { success: false, error: message };
     }
   };
 
@@ -104,7 +104,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Profile updated successfully');
       return { success: true };
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Profile update failed');
+      toast.error(getErrorMessage(error, 'Profile update failed'));
       return { success: false };
     }
   };
@@ -118,7 +118,7 @@ export const AuthProvider = ({ children }) => {
       toast.success('Password changed successfully');
       return { success: true };
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Password change failed');
+      toast.error(getErrorMessage(error, 'Password change failed'));
       return { success: false };
     }
   };

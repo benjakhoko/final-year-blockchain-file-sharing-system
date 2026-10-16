@@ -67,6 +67,7 @@
     "ms": "^2.0.0",
     "multer": "^2.0.2",
     "negotiator": "^0.6.4",
+    "nodemailer": "^9.0.3",
     "object-assign": "^4.1.1",
     "object-inspect": "^1.13.4",
     "on-finished": "^2.4.1",
